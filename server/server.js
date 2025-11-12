@@ -8,14 +8,31 @@ dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+
+// Updated CORS configuration to allow multiple origins
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST']
+    origin: [
+      process.env.CLIENT_URL || 'http://localhost:5173',
+      'https://real-time-communication-with-socket-one.vercel.app',
+      // Allow any Vercel preview deployment
+      /^https:\/\/real-time-communication-with-socket-io-emutua23-.*\.vercel\.app$/,
+      /^https:\/\/real-time-communication-with-socket-one-.*\.vercel\.app$/
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    process.env.CLIENT_URL || 'http://localhost:5173',
+    'https://real-time-communication-with-socket-one.vercel.app',
+    /^https:\/\/real-time-communication-with-socket-io-emutua23-.*\.vercel\.app$/,
+    /^https:\/\/real-time-communication-with-socket-one-.*\.vercel\.app$/
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Store connected users
