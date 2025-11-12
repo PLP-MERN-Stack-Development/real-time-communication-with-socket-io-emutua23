@@ -18,6 +18,28 @@ function ChatRoom({ user, activeChat, messages, users, typingUser }) {
     scrollToBottom();
   }, [messages]);
 
+  // 🔔 NEW: Play sound for incoming messages
+  useEffect(() => {
+    const handleIncomingMessage = (message) => {
+      const isOwnMessage = message?.sender?.id === socket.id;
+      // Only play sound for messages NOT sent by you
+      if (!isOwnMessage && message?.type !== 'system') {
+        const audio = new Audio('/notification.mp3');
+        audio.play().catch((err) => {
+          console.warn('Audio playback failed:', err);
+        });
+      }
+    };
+
+    socket.on('message:receive', handleIncomingMessage);
+    socket.on('private:receive', handleIncomingMessage);
+
+    return () => {
+      socket.off('message:receive', handleIncomingMessage);
+      socket.off('private:receive', handleIncomingMessage);
+    };
+  }, []);
+
   const handleSendMessage = (e) => {
     e.preventDefault();
     
@@ -46,12 +68,10 @@ function ChatRoom({ user, activeChat, messages, users, typingUser }) {
       socket.emit('typing:start', { isPrivate: true, recipientId: activeChat.id });
     }
 
-    // Clear existing timeout
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // Set new timeout
     typingTimeoutRef.current = setTimeout(handleStopTyping, 2000);
   };
 
@@ -83,7 +103,6 @@ function ChatRoom({ user, activeChat, messages, users, typingUser }) {
 
   const getChatTitle = () => {
     if (activeChat.type === 'room') {
-      const room = users[0]?.currentRoom;
       return `# ${activeChat.id}`;
     } else {
       const otherUser = users.find(u => u.id === activeChat.id);
