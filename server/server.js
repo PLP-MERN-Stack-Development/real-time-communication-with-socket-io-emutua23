@@ -9,33 +9,47 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-// Updated CORS configuration to allow multiple origins
+// ✅ Dynamic CORS configuration — allows all Vercel preview URLs
+const allowedOrigins = [
+  process.env.CLIENT_URL || 'http://localhost:5173',
+  'https://real-time-communication-with-socket-one.vercel.app'
+];
+
+const dynamicOriginCheck = (origin, callback) => {
+  // Allow server-to-server or non-browser requests
+  if (!origin) return callback(null, true);
+
+  // Allow main site + all Vercel preview deployments
+  if (
+    allowedOrigins.includes(origin) ||
+    origin.endsWith('.vercel.app')
+  ) {
+    console.log('✅ CORS allowed for:', origin);
+    callback(null, true);
+  } else {
+    console.warn('❌ CORS blocked for:', origin);
+    callback(new Error('Not allowed by CORS'));
+  }
+};
+
+// ✅ Apply CORS to Express
+app.use(cors({
+  origin: dynamicOriginCheck,
+  credentials: true
+}));
+
+app.use(express.json());
+
+// ✅ Apply CORS to Socket.IO
 const io = new Server(httpServer, {
   cors: {
-    origin: [
-      process.env.CLIENT_URL || 'http://localhost:5173',
-      'https://real-time-communication-with-socket-one.vercel.app',
-      // Allow any Vercel preview deployment
-      /^https:\/\/real-time-communication-with-socket-io-emutua23-.*\.vercel\.app$/,
-      /^https:\/\/real-time-communication-with-socket-one-.*\.vercel\.app$/
-    ],
+    origin: dynamicOriginCheck,
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
-app.use(cors({
-  origin: [
-    process.env.CLIENT_URL || 'http://localhost:5173',
-    'https://real-time-communication-with-socket-one.vercel.app',
-    /^https:\/\/real-time-communication-with-socket-io-emutua23-.*\.vercel\.app$/,
-    /^https:\/\/real-time-communication-with-socket-one-.*\.vercel\.app$/
-  ],
-  credentials: true
-}));
-app.use(express.json());
-
-// Store connected users
+// ---- Data Stores ----
 const users = new Map();
 const rooms = new Map();
 const privateMessages = new Map();
@@ -45,6 +59,7 @@ rooms.set('general', { name: 'General', users: new Set() });
 rooms.set('random', { name: 'Random', users: new Set() });
 rooms.set('tech', { name: 'Tech Talk', users: new Set() });
 
+// ---- Routes ----
 app.get('/', (req, res) => {
   res.json({ message: 'Chat server is running' });
 });
@@ -53,10 +68,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', users: users.size });
 });
 
+// ---- Socket.IO Logic ----
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Handle user authentication
+  // User joins
   socket.on('user:join', (userData) => {
     const user = {
       id: socket.id,
@@ -70,7 +86,6 @@ io.on('connection', (socket) => {
     socket.join('general');
     rooms.get('general').users.add(socket.id);
 
-    // Notify user of successful join
     socket.emit('user:joined', {
       user,
       rooms: Array.from(rooms.entries()).map(([id, room]) => ({
@@ -80,10 +95,8 @@ io.on('connection', (socket) => {
       }))
     });
 
-    // Broadcast to all users
     io.emit('users:update', getUsersList());
 
-    // Send system message
     io.to('general').emit('message:receive', {
       id: Date.now(),
       type: 'system',
@@ -93,18 +106,17 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle room joining
+  // Room switching
   socket.on('room:join', (roomId) => {
     const user = users.get(socket.id);
     if (!user) return;
 
     const currentRoom = user.currentRoom;
-    
-    // Leave current room
+
     if (currentRoom && rooms.has(currentRoom)) {
       socket.leave(currentRoom);
       rooms.get(currentRoom).users.delete(socket.id);
-      
+
       io.to(currentRoom).emit('message:receive', {
         id: Date.now(),
         type: 'system',
@@ -114,7 +126,6 @@ io.on('connection', (socket) => {
       });
     }
 
-    // Join new room
     if (rooms.has(roomId)) {
       socket.join(roomId);
       rooms.get(roomId).users.add(socket.id);
@@ -133,7 +144,6 @@ io.on('connection', (socket) => {
         room: roomId
       });
 
-      // Update room lists for all users
       io.emit('rooms:update', Array.from(rooms.entries()).map(([id, room]) => ({
         id,
         name: room.name,
@@ -142,7 +152,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle message sending
+  // Messaging
   socket.on('message:send', (messageData) => {
     const user = users.get(socket.id);
     if (!user) return;
@@ -162,18 +172,14 @@ io.on('connection', (socket) => {
       readBy: [socket.id]
     };
 
-    // Send to room
     io.to(message.room).emit('message:receive', message);
-
-    // Send acknowledgment to sender
     socket.emit('message:sent', { messageId: message.id, success: true });
   });
 
-  // Handle private messages
+  // Private messages
   socket.on('private:send', ({ recipientId, content }) => {
     const sender = users.get(socket.id);
     const recipient = users.get(recipientId);
-    
     if (!sender || !recipient) return;
 
     const message = {
@@ -193,13 +199,9 @@ io.on('connection', (socket) => {
       read: false
     };
 
-    // Send to recipient
     io.to(recipientId).emit('private:receive', message);
-    
-    // Send to sender (for their chat history)
     socket.emit('private:receive', message);
 
-    // Store private message
     const conversationKey = [socket.id, recipientId].sort().join('-');
     if (!privateMessages.has(conversationKey)) {
       privateMessages.set(conversationKey, []);
@@ -207,7 +209,7 @@ io.on('connection', (socket) => {
     privateMessages.get(conversationKey).push(message);
   });
 
-  // Handle typing indicator
+  // Typing indicators
   socket.on('typing:start', ({ room, isPrivate, recipientId }) => {
     const user = users.get(socket.id);
     if (!user) return;
@@ -250,7 +252,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle message reactions
+  // Reactions
   socket.on('message:react', ({ messageId, reaction, room }) => {
     const user = users.get(socket.id);
     if (!user) return;
@@ -263,7 +265,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle read receipts
+  // Read receipts
   socket.on('message:read', ({ messageId, room }) => {
     io.to(room).emit('message:read:update', {
       messageId,
@@ -271,22 +273,20 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle private message read
   socket.on('private:read', ({ senderId }) => {
     io.to(senderId).emit('private:read:update', {
       readBy: socket.id
     });
   });
 
-  // Handle disconnection
+  // Disconnect
   socket.on('disconnect', () => {
     const user = users.get(socket.id);
-    
+
     if (user) {
-      // Remove from rooms
       if (user.currentRoom && rooms.has(user.currentRoom)) {
         rooms.get(user.currentRoom).users.delete(socket.id);
-        
+
         io.to(user.currentRoom).emit('message:receive', {
           id: Date.now(),
           type: 'system',
@@ -297,11 +297,8 @@ io.on('connection', (socket) => {
       }
 
       users.delete(socket.id);
-      
-      // Update users list
+
       io.emit('users:update', getUsersList());
-      
-      // Update room lists
       io.emit('rooms:update', Array.from(rooms.entries()).map(([id, room]) => ({
         id,
         name: room.name,
@@ -313,6 +310,7 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---- Helper ----
 function getUsersList() {
   return Array.from(users.values()).map(user => ({
     id: user.id,
@@ -323,8 +321,8 @@ function getUsersList() {
   }));
 }
 
+// ---- Start Server ----
 const PORT = process.env.PORT || 3001;
-
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
