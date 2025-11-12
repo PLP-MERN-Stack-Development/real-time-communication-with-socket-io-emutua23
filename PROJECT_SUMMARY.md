@@ -336,8 +336,8 @@ This project demonstrates:
 - **Server:** http://localhost:3001
 - **Health Check:** http://localhost:3001/health
 
-### **Production (Example)**
-- **Client:** https://real-time-communication-with-socket-io-emutua23-mse7iktil.vercel.app/
+### **Production:**
+- **Client:** https://real-time-communication-with-socket-one.vercel.app/
 - **Server:** https://real-time-communication-with-socket-io-k3jj.onrender.com/
 - **API:** https://real-time-communication-with-socket-io-k3jj.onrender.com/health
 
